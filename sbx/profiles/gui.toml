@@ -1,0 +1,19 @@
+[profile]
+name = "gui"
+description = "GUI application support"
+
+[filesystem.read]
+paths = ["/Applications", "~/Library/Fonts"]
+
+[filesystem.write]
+paths = [
+    "~/.Library/Preferences/org.gnu.Emacs.plist",
+    "~/.emacs.d",
+    "/Library/Preferences/com.apple.ViewBridge.plist",
+]
+
+[mach]
+lookup_regex = ["^com.apple.*"]
+
+[iokit]
+open = ["AppleAPFSUserClient"]

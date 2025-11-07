@@ -1,0 +1,13 @@
+[profile]
+name = "online"
+description = "Enables network access"
+
+[network]
+enabled = true
+
+[filesystem.read]
+paths = ["/private/var/"]
+
+[mach]
+lookup_regex = ["^com.apple.*"]
+
