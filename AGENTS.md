@@ -2,7 +2,7 @@
 
 ## Overview
 
-**sbx** is a Python-based wrapper around macOS's `sandbox-exec` utility that provides a user-friendly way to run terminals and programs within sandboxes. It translates TOML-based profile configurations into Scheme sandbox profiles that macOS can execute, making it easier to restrict filesystem and network access for untrusted code.
+**sbx** is a Python-based wrapper around macOS's `sandbox-exec` utility that provides a user-friendly way to run terminals and programs within sandboxes. It translates YAML-based profile configurations into Scheme sandbox profiles that macOS can execute, making it easier to restrict filesystem and network access for untrusted code.
 
 ### Purpose
 
@@ -10,7 +10,7 @@ The tool addresses the security concern that package managers (npm, cargo, pip, 
 
 ### Key Value Propositions
 
-- **TOML-based profiles**: Human-readable configuration instead of Scheme syntax
+- **YAML-based profiles**: Human-readable configuration instead of Scheme syntax
 - **Profile composition**: Combine multiple profiles with intelligent merging
 - **Command-line flexibility**: Override profile settings on the fly
 - **User customization**: Profiles stored in `~/.local/config/sbx/` for easy modification
@@ -24,9 +24,9 @@ User Command → CLI Parser → Profile Loader → Profile Merger → Scheme Gen
 ```
 
 1. **CLI Parsing** (`cli.py`): Parses command-line arguments, extracts profile names and overrides
-2. **Profile Loading** (`profile_generator.py`): Loads TOML profiles from user config or package defaults
+2. **Profile Loading** (`profile_generator.py`): Loads YAML profiles from user config or package defaults
 3. **Profile Merging** (`profile_generator.py`): Combines multiple profiles with deep merging
-4. **Scheme Generation** (`profile_generator.py`): Converts merged TOML config to Scheme syntax
+4. **Scheme Generation** (`profile_generator.py`): Converts merged YAML config to Scheme syntax
 5. **Execution** (`cli.py`): Writes temporary Scheme file and executes via `sandbox-exec`
 
 ### Core Components
@@ -39,6 +39,8 @@ User Command → CLI Parser → Profile Loader → Profile Merger → Scheme Gen
 - Handle version flags and profile installation
 - Extract profile names and command-line overrides
 - Resolve executable paths
+- Load executable-specific config from `config.yaml`
+- Match executables against patterns and merge configs
 - Execute `sandbox-exec` with generated profile
 - Set environment variables (`SANDBOX_MODE_NETWORK`)
 
@@ -66,10 +68,11 @@ sbx [profile1] [profile2] [+override.key=value] -- [command] [args...]
 
 **Responsibilities:**
 
-- Load TOML profiles from filesystem
+- Load YAML profiles from filesystem
 - Merge multiple profiles with deep merging logic
-- Convert TOML configuration to Scheme sandbox syntax
+- Convert YAML configuration to Scheme sandbox syntax
 - Handle path variable substitution (`~`, `{working-directory}`, etc.)
+- Normalize dictionary structures to handle flat keys
 
 **Key Classes:**
 
@@ -77,24 +80,25 @@ sbx [profile1] [profile2] [+override.key=value] -- [command] [args...]
 
 **Key Methods:**
 
-- `load_profile(name)`: Loads a TOML profile, checks user config first, then package defaults
+- `load_profile(name)`: Loads a YAML profile, checks user config first, then package defaults
 - `merge_profiles(names, overrides)`: Deep merges multiple profiles and applies overrides
 - `generate_scheme(config, params)`: Converts `ProfileConfig` to Scheme string
-- `_deep_merge()`: Recursively merges dictionaries, handles list concatenation
+- `deep_merge()`: Recursively merges dictionaries, handles list concatenation
+- `_normalize_dict_structure()`: Normalizes flat keys into nested structures
 - `_format_path()`: Formats paths with variable substitution and Scheme syntax
 - `_add_file_rules()`: Generates file read/write rules for Scheme
 
 **Profile Resolution Order:**
 
-1. `~/.local/config/sbx/profiles/{name}.toml` (user profiles)
-2. `sbx/profiles/{name}.toml` (package profiles)
+1. `~/.local/config/sbx/profiles/{name}.yaml` (user profiles)
+2. `sbx/profiles/{name}.yaml` (package profiles)
 
 #### 3. Data Models (`sbx/models.py`)
 
 **Responsibilities:**
 
 - Define Pydantic models for type-safe configuration
-- Validate TOML structure
+- Validate YAML structure
 - Provide serialization/deserialization
 
 **Key Models:**
@@ -119,7 +123,7 @@ sbx [profile1] [profile2] [+override.key=value] -- [command] [args...]
 **Model Features:**
 
 - `extra="allow"` on all models to permit additional fields
-- `from_dict()`: Class method to create from TOML dictionaries
+- `from_dict()`: Class method to create from YAML dictionaries
 - `to_dict()`: Excludes `None` and unset values for clean merging
 
 #### 4. Installation Module (`sbx/install.py`)
@@ -131,68 +135,93 @@ sbx [profile1] [profile2] [+override.key=value] -- [command] [args...]
 
 **Key Functions:**
 
-- `install_default_profiles(force=False)`: Copies `.toml` files from `sbx/profiles/` to `~/.local/config/sbx/profiles/`
+- `install_default_profiles(force=False)`: Copies `.yaml` files from `sbx/profiles/` to `~/.local/config/sbx/profiles/`
+
+#### 5. Config Loader Module (`sbx/config_loader.py`)
+
+**Responsibilities:**
+
+- Load executable-specific configuration from `config.yaml`
+- Parse dot-notation override keys into nested dictionaries
+- Match executable names against regex patterns
+
+**Key Functions:**
+
+- `load_executable_config(config_path=None)`: Loads `~/.local/config/sbx/config.yaml` and returns `ExecutablesConfig`
+- `find_matching_executable_configs(executable_name, config)`: Finds all configs matching an executable name
+- `parse_dot_notation_overrides(data)`: Converts flat keys like `network.enabled` to nested dicts
 
 ## Profile System
 
 ### Profile Format
 
-Profiles are TOML files with the following structure:
+Profiles are YAML files with the following structure:
 
-```toml
-[profile]
-name = "profile-name"
-description = "Human-readable description"
+```yaml
+profile:
+  name: profile-name
+  description: "Human-readable description"
 
-[imports]
-system_profiles = ["/System/Library/Sandbox/Profiles/bsd.sb"]
+imports:
+  system_profiles:
+    - /System/Library/Sandbox/Profiles/bsd.sb
 
-[network]
-enabled = true
-allow_localhost = true
+network:
+  enabled: true
+  allow_localhost: true
 
-[filesystem]
-default_deny = true
+filesystem:
+  default_deny: true
 
-[filesystem.read]
-paths = ["/bin", "~/.config"]
-regex = ["^/Users/.*/Library/.*"]
+filesystem.read:
+  paths:
+    - /bin
+    - ~/.config
+  regex:
+    - "^/Users/.*/Library/.*"
 
-[filesystem.write]
-paths = ["{working-directory}", "~/.cache"]
-regex = ["^/dev/tty.*"]
+filesystem.write:
+  paths:
+    - "{working-directory}"
+    - ~/.cache
+  regex:
+    - "^/dev/tty.*"
 
-[process]
-allow_exec = true
-allow_fork = true
+process:
+  allow_exec: true
+  allow_fork: true
 
-[system]
-allow_user_preferences = true
-allow_sysctl_write = true
-allow_system_debug = true
-allow_mach_priv_task_port = true
+system:
+  allow_user_preferences: true
+  allow_sysctl_write: true
+  allow_system_debug: true
+  allow_mach_priv_task_port: true
 
-[mach]
-lookup = ["com.apple.FSEvents"]
-lookup_regex = ["^com.apple.*"]
+mach:
+  lookup:
+    - com.apple.FSEvents
+  lookup_regex:
+    - "^com.apple.*"
 
-[ipc]
-allow_posix_shm = true
-posix_shm_names = ["my-shm"]
-allow_posix_sem = true
+ipc:
+  allow_posix_shm: true
+  posix_shm_names:
+    - my-shm
+  allow_posix_sem: true
 
-[signal]
-target = "children"
+signal:
+  target: children
 
-[iokit]
-open = ["IOHIDParamUserClient"]
+iokit:
+  open:
+    - IOHIDParamUserClient
 ```
 
 ### Built-in Profiles
 
 Located in `sbx/profiles/`:
 
-1. **base.toml**: Default offline sandbox
+1. **base.yaml**: Default offline sandbox
 
    - Imports `bsd.sb` system profile
    - Network disabled (localhost only)
@@ -201,29 +230,29 @@ Located in `sbx/profiles/`:
    - Process execution and forking allowed
    - System permissions for user preferences and debugging
 
-2. **online.toml**: Adds network access
+2. **online.yaml**: Adds network access
 
    - Enables full network access
    - Adds Mach port lookups for Apple services
 
-3. **app.toml**: Example GUI application profile (Cyberduck)
+3. **app.yaml**: Example GUI application profile (Cyberduck)
 
    - Network enabled
    - Application directory access
    - IOKit device access
 
-4. **uv_tools.toml**: Profile for `uv` package manager
+4. **uv_tools.yaml**: Profile for `uv` package manager
 
    - Network enabled
    - Specific paths for uv configuration
 
-5. **gui.toml**: GUI application support
+5. **gui.yaml**: GUI application support
 
    - Font access
    - Application directory access
    - IOKit access
 
-6. **file-full.toml**: Full filesystem write access
+6. **file-full.yaml**: Full filesystem write access
    - Allows writing to `/`
 
 ### Profile Merging Logic
@@ -278,11 +307,59 @@ All user configuration lives in `~/.local/config/sbx/`:
 ```
 ~/.local/config/sbx/
 ├── profiles/
-│   ├── base.toml          # User overrides of base profile
-│   ├── online.toml        # User overrides of online profile
-│   └── custom.toml        # User-defined profiles
-└── executables.toml       # Executable-specific profiles (planned feature)
+│   ├── base.yaml          # User overrides of base profile
+│   ├── online.yaml        # User overrides of online profile
+│   └── custom.yaml        # User-defined profiles
+└── config.yaml            # Executable-specific profiles and overrides
 ```
+
+### Executable-Specific Configuration
+
+The `config.yaml` file allows you to automatically apply profiles and overrides based on executable name patterns:
+
+```yaml
+executables:
+  uv:
+    pattern: "^uv.*"
+    profiles:
+      - base
+      - online
+      - uv_tools
+    overrides:
+      network:
+        enabled: true
+      filesystem:
+        write:
+          paths:
+            - ~/.local/share/uv/
+
+  npm:
+    pattern: "^npm.*"
+    profiles:
+      - base
+      - online
+    overrides:
+      network:
+        enabled: true
+      filesystem:
+        write:
+          paths:
+            - ~/.local/share/npm/
+            - ~/.cache/npm/
+
+  cargo:
+    pattern: "^cargo.*"
+    profiles:
+      - base
+```
+
+When you run a command like `sbx -- uv install`, the executable name (`uv`) is matched against the patterns, and the matching configs are merged with any command-line specified profiles and overrides. Precedence order:
+
+1. Base profile (always included unless `no-base`)
+2. Executable-specific profiles (from `config.yaml`)
+3. Command-line specified profiles
+4. Executable-specific overrides (from `config.yaml`)
+5. Command-line overrides (highest precedence)
 
 ## Execution Flow
 
@@ -299,38 +376,48 @@ All user configuration lives in `~/.local/config/sbx/`:
    - Always prepend `base` unless `no-base` is explicitly specified
    - Parse `+key=value` overrides into nested dictionary
 
-3. **Profile Loading** (`ProfileGenerator.load_profile()`)
+3. **Executable Config Loading** (`config_loader.load_executable_config()`)
+
+   - If command provided, extract executable name
+   - Load `~/.local/config/sbx/config.yaml` if it exists
+   - Match executable name against patterns
+   - Collect matching profiles and overrides
+
+4. **Profile Loading** (`ProfileGenerator.load_profile()`)
 
    - Check user profiles directory first
    - Fall back to package profiles
-   - Load TOML file and parse into `ProfileConfig` model
+   - Load YAML file and parse into `ProfileConfig` model
 
-4. **Profile Merging** (`ProfileGenerator.merge_profiles()`)
+5. **Profile Merging** (`ProfileGenerator.merge_profiles()`)
 
    - Start with empty dictionary
    - Load each profile in order and deep merge
+   - Merge executable-specific profiles and overrides
    - Apply command-line overrides last
+   - Normalize dictionary structure to handle flat keys
 
-5. **Scheme Generation** (`ProfileGenerator.generate_scheme()`)
+6. **Scheme Generation** (`ProfileGenerator.generate_scheme()`)
 
    - Convert merged `ProfileConfig` to Scheme syntax
    - Substitute path variables (`~`, `{working-directory}`, etc.)
    - Generate appropriate Scheme rules for each config section
+   - Use `home-subpath` helper function for home-relative paths
 
-6. **Temporary File Creation**
+7. **Temporary File Creation**
 
    - Write Scheme profile to temporary file (`.sb` suffix)
    - File is not deleted (left for debugging)
 
-7. **Environment Setup**
+8. **Environment Setup**
 
    - Set `SANDBOX_MODE_NETWORK` environment variable
    - Copy existing environment variables
 
-8. **Command Execution**
+9. **Command Execution**
    - If command provided: resolve executable path, wrap in `/bin/sh -c`
    - If no command: use `$SHELL` or `/bin/sh` for interactive shell
-   - Execute `sandbox-exec -f <profile> <command>`
+   - Execute `sandbox-exec -f <profile> -D home=<home-path> <command>`
    - Exit with command's exit code
 
 ### Shell Execution Strategy
@@ -382,12 +469,12 @@ sandboxtron/
 │   ├── profile_generator.py # Profile loading/merging/Scheme generation
 │   ├── install.py         # Profile installation helper
 │   └── profiles/          # Built-in profiles
-│       ├── base.toml
-│       ├── online.toml
-│       ├── app.toml
-│       ├── gui.toml
-│       ├── file-full.toml
-│       └── uv_tools.toml
+│       ├── base.yaml
+│       ├── online.yaml
+│       ├── app.yaml
+│       ├── gui.yaml
+│       ├── file-full.yaml
+│       └── uv_tools.yaml
 ├── pyproject.toml         # Project metadata and dependencies
 ├── Makefile              # Development commands
 ├── README.md             # User documentation
@@ -399,8 +486,8 @@ sandboxtron/
 **Runtime:**
 
 - `pydantic>=2.12.4`: Data validation and models
+- `pyyaml>=6.0.0`: YAML parsing and serialization
 - `rich>=14.2.0`: Terminal output formatting (for install messages)
-- `tomllib`: Built-in Python 3.11+ (or `tomli>=2.0.0` for older Python)
 
 **Development:**
 
@@ -472,27 +559,23 @@ The project uses `basedpyright` (Pyright fork) for type checking. Configuration 
 
 ### Current Limitations
 
-1. **Executable-specific profiles**: Mentioned in README but not implemented
-
-   - Would require parsing `executables.toml` and matching executable names
-   - Would need to integrate with command resolution logic
-
-2. **Sandbox reinit errors**: Some apps fail with `forbidden-sandbox-reinit`
+1. **Sandbox reinit errors**: Some apps fail with `forbidden-sandbox-reinit`
 
    - Electron apps
    - `swift build` (though `swift` REPL works)
 
-3. **Temporary file cleanup**: Generated `.sb` files are not deleted
+2. **Temporary file cleanup**: Generated `.sb` files are not deleted
    - Could accumulate in `/tmp/`
    - Consider cleanup on successful execution
 
 ### Potential Enhancements
 
-1. **Profile validation**: Validate TOML structure before execution
+1. **Profile validation**: Validate YAML structure before execution
 2. **Profile caching**: Cache generated Scheme files for performance
 3. **Better error messages**: More descriptive errors for common issues
 4. **Profile inheritance**: Explicit profile inheritance mechanism
 5. **Profile testing**: Dry-run mode to validate profiles without execution
+6. **Debug mode**: Use `--debug` flag to see effective config and generated Scheme
 
 ## Code Patterns & Conventions
 
@@ -526,7 +609,7 @@ The project uses `basedpyright` (Pyright fork) for type checking. Configuration 
 
 ### Adding a New Profile
 
-1. Create `sbx/profiles/new-profile.toml`
+1. Create `sbx/profiles/new-profile.yaml`
 2. Follow existing profile structure
 3. Document in README if it's a general-purpose profile
 4. Test with: `sbx new-profile -- <test-command>`
@@ -534,9 +617,10 @@ The project uses `basedpyright` (Pyright fork) for type checking. Configuration 
 ### Modifying Core Logic
 
 1. **Profile loading**: Modify `ProfileGenerator.load_profile()`
-2. **Merging logic**: Modify `ProfileGenerator._deep_merge()`
+2. **Merging logic**: Modify `deep_merge()` or `ProfileGenerator._normalize_dict_structure()`
 3. **Scheme generation**: Modify `ProfileGenerator.generate_scheme()`
 4. **CLI parsing**: Modify `cli.py:parse_overrides()` or `cli.py:main()`
+5. **Executable config**: Modify `config_loader.py` for executable matching logic
 
 ### Adding New Configuration Options
 
@@ -565,23 +649,27 @@ The project uses `basedpyright` (Pyright fork) for type checking. Configuration 
 
 - `sbx/cli.py`: CLI entry point and execution logic
 - `sbx/profile_generator.py`: Profile loading, merging, and Scheme generation
+- `sbx/config_loader.py`: Executable-specific config loading and matching
 - `sbx/models.py`: Pydantic data models
-- `sbx/profiles/base.toml`: Default profile (most important)
+- `sbx/profiles/base.yaml`: Default profile (most important)
 
 ### Key Functions
 
 - `cli.main()`: Main entry point
-- `ProfileGenerator.load_profile()`: Load TOML profile
+- `ProfileGenerator.load_profile()`: Load YAML profile
 - `ProfileGenerator.merge_profiles()`: Merge multiple profiles
 - `ProfileGenerator.generate_scheme()`: Convert to Scheme syntax
+- `config_loader.load_executable_config()`: Load executable-specific config
+- `config_loader.find_matching_executable_configs()`: Match executables against patterns
 - `cli.parse_overrides()`: Parse command-line overrides
 
 ### Common Tasks
 
-**Add a new profile**: Create `.toml` file in `sbx/profiles/`
-**Modify merging logic**: Edit `ProfileGenerator._deep_merge()`
+**Add a new profile**: Create `.yaml` file in `sbx/profiles/`
+**Modify merging logic**: Edit `deep_merge()` or `_normalize_dict_structure()`
 **Add new config option**: Add field to model, add Scheme generation
-**Debug profile**: Check `/tmp/` for generated `.sb` files
+**Debug profile**: Use `--debug` flag or check `/tmp/` for generated `.sb` files
+**Configure executable profiles**: Edit `~/.local/config/sbx/config.yaml`
 
 ---
 

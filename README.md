@@ -85,13 +85,57 @@ Profiles are defined in TOML format. See `sbx/profiles/` for examples.
 
 Key sections:
 
-- `[network]` - Network access configuration
-- `[filesystem]` - File system read/write permissions
-- `[process]` - Process execution and forking
-- `[system]` - System-level permissions
-- `[mach]` - Mach port lookups
-- `[ipc]` - Inter-process communication
-- `[signal]` - Signal handling
+- `network` - Network access configuration
+- `filesystem` - File system read/write permissions
+- `process` - Process execution and forking
+- `system` - System-level permissions
+- `mach` - Mach port lookups
+- `ipc` - Inter-process communication
+- `signal` - Signal handling
+
+### Executable-Specific Configuration
+
+You can configure default profiles and overrides for specific executables in `~/.local/config/sbx/config.yaml`:
+
+````yaml
+executables:
+  uv:
+    pattern: "^uv.*"
+    profiles:
+      - base
+      - online
+      - uv_tools
+    overrides:
+      network:
+        enabled: true
+      filesystem:
+        write:
+          paths:
+            - ~/.local/share/uv/
+
+  npm:
+    pattern: "^npm.*"
+    profiles:
+      - base
+      - online
+    overrides:
+```
+
+### Debugging
+
+Use the `--debug` flag to see the effective configuration and generated Scheme profile:
+
+```bash
+sbx --debug online uv_tools +filesystem.read.paths='["~/Library/App"]' -- llm templates list
+````
+
+This will show:
+
+- Profiles merged (in order)
+- Command-line overrides
+- Merged configuration (as YAML)
+- Generated Scheme profile
+- Profile file path
 
 ## Troubleshooting
 
