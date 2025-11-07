@@ -1,0 +1,31 @@
+{
+  "include": ["src"],
+
+  "exclude": ["**/__pycache__"],
+
+  "ignore": [],
+
+  "defineConstant": {
+    "DEBUG": true
+  },
+
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": true,
+  "reportExplicitAny": "none",
+  "reportUnusedCallResult": "none",
+  "reportAny": false,
+  "reportImplicitStringConcatenation": "none",
+
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Darwin",
+
+  "executionEnvironments": [
+    {
+      "root": "src",
+      "pythonVersion": "3.13",
+      "pythonPlatform": "Darwin",
+      "extraPaths": ["src/seshat"],
+      "reportMissingImports": "warning"
+    }
+  ]
+}

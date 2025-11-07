@@ -1,0 +1,40 @@
+[profile]
+name = "uv"
+description = "Profile for uv tools"
+
+[imports]
+system_profiles = ["/System/Library/Sandbox/Profiles/bsd.sb"]
+
+[network]
+enabled = true
+allow_localhost = true
+
+[filesystem]
+default_deny = true
+
+[filesystem.read]
+paths = [
+    "/Applications",
+    "~/Library/Keyboard Layouts",
+    "~/Library/Input Methods",
+    "~/Library/Application Support/CrashReporter",
+    "~/Library/Logs/DiagnosticReports",
+    "/private/var/",
+    "~/.local/share/uv/",
+]
+
+[filesystem.write]
+paths = [
+    "~/Library/Application Support/CrashReporter",
+    "~/Library/Logs/DiagnosticReports",
+]
+
+[process]
+allow_exec = true
+allow_fork = true
+
+[system]
+allow_user_preferences = true
+
+[mach]
+lookup_regex = ["^com.apple.*"]

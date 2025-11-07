@@ -29,6 +29,7 @@ paths = [
     "/Library/Developer/CommandLineTools/",
     "~/.dotfiles/link",
     "~/.dotfiles/shell_sources",
+    "/opt/homebrew",
 ]
 regex = [
     "/Users/[a-zA-Z]+/Library/Python/[0-9,\\.]+/lib/python[0-9,\\.]*/site-packages",
@@ -59,10 +60,7 @@ paths = [
     "~/.Library/Developer/Xcode/DerivedData",
     "{working-directory}",
 ]
-regex = [
-    "^/dev/tty.*",
-    "{home}/.histfile.*",
-]
+regex = ["^/dev/tty.*", "{home}/.histfile.*"]
 
 [process]
 allow_exec = true
@@ -79,4 +77,3 @@ lookup = ["com.apple.FSEvents"]
 
 [signal]
 target = "children"
-

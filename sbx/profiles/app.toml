@@ -1,0 +1,49 @@
+[profile]
+name = "cyberduck"
+description = "Profile for Cyberduck FTP/SFTP client"
+
+[imports]
+system_profiles = ["/System/Library/Sandbox/Profiles/bsd.sb"]
+
+[network]
+enabled = true
+allow_localhost = true
+
+[filesystem]
+default_deny = true
+
+[filesystem.read]
+paths = [
+    "/Applications",
+    "/Library/Preferences/com.apple.networkd.plist",
+    "/Library/Preferences/com.apple.security.plist",
+    "~/Library/Keyboard Layouts",
+    "~/Library/Input Methods",
+    "~/Library/Application Support/CrashReporter",
+    "~/Library/Logs/DiagnosticReports",
+    "/private/var/",
+]
+
+[filesystem.write]
+paths = [
+    "~/Library/Application Support/CrashReporter",
+    "~/Library/Logs/DiagnosticReports",
+]
+
+[process]
+allow_exec = true
+allow_fork = true
+
+[system]
+allow_user_preferences = true
+
+[mach]
+lookup_regex = ["^com.apple.*"]
+
+[iokit]
+open = [
+    "IOHIDParamUserClient",
+    "IOSurfaceRootUserClient",
+    "AGXDeviceUserClient",
+    "RootDomainUserClient",
+]

@@ -5,17 +5,19 @@ from typing import Any
 
 import tomllib
 
+from sbx.models import FilesystemConfig, ProfileConfig, ProfileOverrides
+
 
 class ProfileGenerator:
     """Generates Scheme sandbox profiles from TOML configuration."""
 
     def __init__(self, profiles_dir: Path, cache_dir: Path | None = None):
-        self.profiles_dir = profiles_dir
-        self.cache_dir = cache_dir
+        self.profiles_dir: Path = profiles_dir
+        self.cache_dir: Path | None = cache_dir
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_profile(self, name: str) -> dict[str, Any]:
+    def load_profile(self, name: str) -> ProfileConfig:
         """Load a TOML profile."""
         # Try user config directory first
         profile_path = self.profiles_dir / f"{name}.toml"
@@ -30,34 +32,36 @@ class ProfileGenerator:
                 )
 
         with open(profile_path, "rb") as f:
-            return tomllib.load(f)
+            data = tomllib.load(f)
+            return ProfileConfig.from_dict(data)
 
     def merge_profiles(
-        self, profile_names: list[str], overrides: dict | None = None
-    ) -> dict:
+        self, profile_names: list[str], overrides: ProfileOverrides | None = None
+    ) -> ProfileConfig:
         """Merge multiple profiles with optional overrides."""
-        merged: dict[str, Any] = {}
+        merged_dict: dict[str, Any] = {}
 
         for name in profile_names:
             profile = self.load_profile(name)
-            merged = self._deep_merge(merged, profile)
+            profile_dict = profile.to_dict()
+            merged_dict = self._deep_merge(merged_dict, profile_dict)
 
         if overrides:
-            merged = self._deep_merge(merged, overrides)
+            merged_dict = self._deep_merge(merged_dict, overrides)
 
-        return merged
+        return ProfileConfig.from_dict(merged_dict)
 
-    def generate_scheme(self, config: dict[str, Any], params: dict[str, str]) -> str:
+    def generate_scheme(self, config: ProfileConfig, params: dict[str, str]) -> str:
         """Generate Scheme sandbox profile from merged config."""
         lines: list[str] = ["(version 1)"]
 
         # Handle imports first (before deny default)
-        imports = config.get("imports", {})
-        for imp in imports.get("system_profiles", []):
-            lines.append(f'(import "{imp}")')
+        if config.imports:
+            for imp in config.imports.system_profiles:
+                lines.append(f'(import "{imp}")')
 
         # Default deny
-        if config.get("filesystem", {}).get("default_deny", False):
+        if config.filesystem and config.filesystem.default_deny:
             lines.append("(deny default)")
 
         # Helper function definitions
@@ -69,110 +73,104 @@ class ProfileGenerator:
         lines.append("")
 
         # Network rules
-        network = config.get("network", {})
-        if network.get("enabled", False):
-            lines.append("(allow network*)")
-        elif network.get("allow_localhost", False):
-            lines.append('(allow network* (to ip "localhost:*"))')
-            lines.append('(allow network-inbound (from ip "localhost:*"))')
+        if config.network:
+            if config.network.enabled:
+                lines.append("(allow network*)")
+            elif config.network.allow_localhost:
+                lines.append('(allow network* (to ip "localhost:*"))')
+                lines.append('(allow network-inbound (from ip "localhost:*"))')
 
         # File system rules
-        fs = config.get("filesystem", {})
-        self._add_file_rules(lines, fs, params)
+        if config.filesystem:
+            self._add_file_rules(lines, config.filesystem, params)
 
         # Process rules
-        process = config.get("process", {})
-        if process.get("allow_exec", False):
-            lines.append("(allow process-exec)")
-        if process.get("allow_fork", False):
-            lines.append("(allow process-fork)")
+        if config.process:
+            if config.process.allow_exec:
+                lines.append("(allow process-exec)")
+            if config.process.allow_fork:
+                lines.append("(allow process-fork)")
 
         # System rules
-        system = config.get("system", {})
-        if system.get("allow_user_preferences", False):
-            lines.append("(allow user-preference-read)")
-        if system.get("allow_sysctl_write", False):
-            lines.append("(allow sysctl-write)")
-        if system.get("allow_system_debug", False):
-            lines.append("(allow system-debug)")
-        if system.get("allow_mach_priv_task_port", False):
-            lines.append("(allow mach-priv-task-port)")
+        if config.system:
+            if config.system.allow_user_preferences:
+                lines.append("(allow user-preference-read)")
+            if config.system.allow_sysctl_write:
+                lines.append("(allow sysctl-write)")
+            if config.system.allow_system_debug:
+                lines.append("(allow system-debug)")
+            if config.system.allow_mach_priv_task_port:
+                lines.append("(allow mach-priv-task-port)")
 
         # Mach rules
-        mach = config.get("mach", {})
-        lookup_names = mach.get("lookup", [])
-        for name in lookup_names:
-            lines.append(f'(allow mach-lookup (global-name "{name}"))')
+        if config.mach:
+            for name in config.mach.lookup:
+                lines.append(f'(allow mach-lookup (global-name "{name}"))')
 
-        lookup_regexes = mach.get("lookup_regex", [])
-        for regex in lookup_regexes:
-            lines.append(f'(allow mach-lookup (global-name-regex "{regex}"))')
+            for regex in config.mach.lookup_regex:
+                lines.append(f'(allow mach-lookup (global-name-regex "{regex}"))')
 
         # IPC rules
-        ipc = config.get("ipc", {})
-        if ipc.get("allow_posix_shm", False):
-            shm_names = ipc.get("posix_shm_names", [])
-            if shm_names:
-                lines.append("(allow ipc-posix-shm")
-                for name in shm_names:
-                    lines.append(f'       (ipc-posix-name "{name}")')
-                lines.append(")")
-            else:
-                lines.append("(allow ipc-posix-shm)")
+        if config.ipc:
+            if config.ipc.allow_posix_shm:
+                if config.ipc.posix_shm_names:
+                    lines.append("(allow ipc-posix-shm")
+                    for name in config.ipc.posix_shm_names:
+                        lines.append(f'       (ipc-posix-name "{name}")')
+                    lines.append(")")
+                else:
+                    lines.append("(allow ipc-posix-shm)")
 
-        if ipc.get("allow_posix_sem", False):
-            lines.append("(allow ipc-posix-sem)")
+            if config.ipc.allow_posix_sem:
+                lines.append("(allow ipc-posix-sem)")
 
         # Signal rules
-        signal = config.get("signal", {})
-        if signal.get("target"):
-            target = signal["target"]
-            lines.append(f"(allow signal (target {target}))")
+        if config.signal and config.signal.target:
+            lines.append(f"(allow signal (target {config.signal.target}))")
 
         # IOKit rules
-        iokit = config.get("iokit", {})
-        for name in iokit.get("open", []):
-            lines.append(f'(allow iokit-open (global-name "{name}"))')
+        if config.iokit:
+            for name in config.iokit.open:
+                lines.append(f'(allow iokit-open (global-name "{name}"))')
 
         return "\n".join(lines)
 
     def _add_file_rules(
-        self, lines: list[str], fs: dict[str, Any], params: dict[str, str]
+        self, lines: list[str], fs: FilesystemConfig, params: dict[str, str]
     ) -> None:
         """Add file system allow rules."""
-        # Read-only paths
-        read_config = fs.get("read", {})
-        read_paths = read_config.get("paths", [])
-        read_regexes = read_config.get("regex", [])
-        if not isinstance(read_regexes, list):
-            read_regexes = []
 
-        if read_paths or read_regexes:
-            lines.append("(allow file-read*")
-            for path in read_paths:
-                formatted = self._format_path(path, params)
-                lines.append(f"       {formatted}")
-            for regex in read_regexes:
-                formatted_regex = self._substitute_vars(regex, params)
-                lines.append(f'       (regex #"{formatted_regex}")')
-            lines.append(")")
+        # Read-only paths
+        read_config = fs.read
+        if read_config:
+            read_paths = read_config.paths
+            read_regexes = read_config.regex
+
+            if read_paths or read_regexes:
+                lines.append("(allow file-read*")
+                for path in read_paths:
+                    formatted = self._format_path(path, params)
+                    lines.append(f"       {formatted}")
+                for regex in read_regexes:
+                    formatted_regex = self._substitute_vars(regex, params)
+                    lines.append(f'       (regex #"{formatted_regex}")')
+                lines.append(")")
 
         # Write paths
-        write_config = fs.get("write", {})
-        write_paths = write_config.get("paths", [])
-        write_regexes = write_config.get("regex", [])
-        if not isinstance(write_regexes, list):
-            write_regexes = []
+        write_config = fs.write
+        if write_config:
+            write_paths = write_config.paths
+            write_regexes = write_config.regex
 
-        if write_paths or write_regexes:
-            lines.append("(allow file*")
-            for path in write_paths:
-                formatted = self._format_path(path, params)
-                lines.append(f"       {formatted}")
-            for regex in write_regexes:
-                formatted_regex = self._substitute_vars(regex, params)
-                lines.append(f'       (regex #"{formatted_regex}")')
-            lines.append(")")
+            if write_paths or write_regexes:
+                lines.append("(allow file*")
+                for path in write_paths:
+                    formatted = self._format_path(path, params)
+                    lines.append(f"       {formatted}")
+                for regex in write_regexes:
+                    formatted_regex = self._substitute_vars(regex, params)
+                    lines.append(f'       (regex #"{formatted_regex}")')
+                lines.append(")")
 
     def _format_path(self, path: str, params: dict[str, str]) -> str:
         """Format path with variable substitution."""
@@ -205,7 +203,7 @@ class ProfileGenerator:
         self, base: dict[str, Any], override: dict[str, Any]
     ) -> dict[str, Any]:
         """Deep merge two dictionaries."""
-        result = base.copy()
+        result: dict[str, Any] = base.copy()
         for key, value in override.items():
             if (
                 key in result

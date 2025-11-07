@@ -1,27 +1,22 @@
 """Main CLI for sbx."""
 
+import json
 import os
 import sys
 import tempfile
-import fnmatch
 import shutil
 import shlex
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Dict, Any
-
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    import tomli as tomllib  # Fallback for older Python
 
 from sbx.profile_generator import ProfileGenerator
 from sbx.install import install_default_profiles
+from sbx.models import ProfileOverrides
 
 
 def get_config_dir() -> Path:
     """Get the sbx configuration directory."""
-    config_dir = Path.home() / ".local" / "share" / "sbx"
+    config_dir = Path.home() / ".local" / "config" / "sbx"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -33,43 +28,10 @@ def get_profiles_dir() -> Path:
     return profiles_dir
 
 
-def find_executable_config(cmd: str) -> dict[str, Any]:
-    """Find matching executable config from executables.toml."""
-    config_file = get_config_dir() / "executables.toml"
-    if not config_file.exists():
-        return {}
-
-    try:
-        with open(config_file, "rb") as f:
-            config = tomllib.load(f)
-    except Exception:
-        return {}
-
-    for exec_config in config.get("executables", []):
-        pattern = exec_config.get("pattern", "")
-        if not pattern:
-            continue
-
-        # Try matching the command name
-        if fnmatch.fnmatch(cmd, pattern):
-            return exec_config
-
-        # Try matching with full path
-        if fnmatch.fnmatch(f"/{cmd}", pattern):
-            return exec_config
-
-        # Try matching just the basename
-        cmd_basename = os.path.basename(cmd)
-        if fnmatch.fnmatch(cmd_basename, pattern):
-            return exec_config
-
-    return {}
-
-
-def parse_overrides(args: list[str]) -> tuple[list[str], dict[str, Any]]:
+def parse_overrides(args: list[str]) -> tuple[list[str], ProfileOverrides]:
     """Parse inline override arguments like +network.enabled=true."""
-    profiles = []
-    overrides: dict[str, Any] = {}
+    profiles: list[str] = []
+    overrides: ProfileOverrides = {}  # type: ignore[type-arg]
 
     for arg in args:
         if arg.startswith("+") or arg.startswith("override:"):
@@ -78,13 +40,22 @@ def parse_overrides(args: list[str]) -> tuple[list[str], dict[str, Any]]:
             if "=" in override_str:
                 path, value = override_str.split("=", 1)
                 # Convert value to appropriate type
-                if value.lower() == "true":
+                # Try parsing as JSON first (for lists, dicts, etc.)
+                if value.strip().startswith(("[", "{")):
+                    try:
+                        value = json.loads(value)
+                    except json.JSONDecodeError:
+                        pass  # Fall through to other type conversions
+
+                # Handle boolean strings
+                if isinstance(value, str) and value.lower() == "true":
                     value = True
-                elif value.lower() == "false":
+                elif isinstance(value, str) and value.lower() == "false":
                     value = False
-                elif value.isdigit():
+                # Handle numeric strings
+                elif isinstance(value, str) and value.isdigit():
                     value = int(value)
-                else:
+                elif isinstance(value, str):
                     try:
                         value = float(value)
                     except ValueError:
@@ -114,10 +85,16 @@ def main() -> None:
         sys.exit(0)
 
     # Ensure default profiles are installed
-    install_default_profiles()
+    if "--install-profiles" in sys.argv:
+        sys.argv.remove("--install-profiles")
+        force = "--force" in sys.argv
+        if force:
+            sys.argv.remove("--force")
+        install_default_profiles(force=force)
+        sys.exit(0)
 
     profiles: list[str] = ["base"]
-    overrides: dict[str, Any] = {}
+    overrides: ProfileOverrides = {}  # type: ignore[type-arg]
     command: list[str] | None = None
 
     # Parse arguments
@@ -137,17 +114,6 @@ def main() -> None:
             profiles = ["base"] + profiles
     if parsed_overrides:
         overrides = parsed_overrides
-
-    # If command provided, check for executable-specific config
-    if command:
-        exec_config = find_executable_config(command[0])
-        if exec_config:
-            exec_profiles = exec_config.get("profiles")
-            if exec_profiles:
-                profiles = exec_profiles
-            exec_overrides = exec_config.get("overrides", {})
-            # Merge executable overrides with command-line overrides (CLI takes precedence)
-            overrides = {**exec_overrides, **overrides}
 
     # Generate profile
     profiles_dir = get_profiles_dir()
@@ -169,12 +135,12 @@ def main() -> None:
 
     # Write temporary profile
     with tempfile.NamedTemporaryFile(mode="w", suffix=".sb", delete=False) as f:
-        f.write(scheme_profile)
+        _ = f.write(scheme_profile)
         profile_path = f.name
 
     # Set environment variables
     env = os.environ.copy()
-    network_enabled = merged_config.get("network", {}).get("enabled", False)
+    network_enabled = merged_config.network.enabled if merged_config.network else False
     env["SANDBOX_MODE_NETWORK"] = "online" if network_enabled else "offline"
 
     # Prepare command

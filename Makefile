@@ -19,7 +19,7 @@ help: ## Show this help message
 
 install: ## Install the package using uv
 	@echo "$(BLUE)Installing $(PACKAGE_NAME)...$(NC)"
-	$(UV) tool install -e .
+	$(UV) tool install --reinstall -e .
 	@echo "$(GREEN)✓ Installed! Use 'sbx' command$(NC)"
 
 install-dev: ## Install package in development mode with dev dependencies
