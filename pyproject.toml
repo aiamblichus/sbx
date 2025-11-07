@@ -13,7 +13,6 @@ dependencies = [
 
 [project.scripts]
 sbx = "sbx.cli:main"
-sb = "sbx.cli:main"
 
 [build-system]
 requires = ["hatchling"]
