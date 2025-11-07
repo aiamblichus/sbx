@@ -79,22 +79,6 @@ When running in a sandbox, the following env vars will be defined:
   - `online` - network access enabled
   - `offline` - network access disabled (localhost only)
 
-I find it helpful to add emoji to my ZSH prompt to remind me of my shell's capabilities:
-
-```sh
-PROMPT="%(?.%F{green}.%F{red})"
-
-if [[ "online" = "${SANDBOX_MODE_NETWORK:-offline}" ]]; then
-    PROMPT+="📡"
-fi
-
-if [[ -r "$HOME" ]]; then
-    PROMPT+="🏠"
-fi
-
-PROMPT+=" |%f "
-```
-
 ## Profile Format
 
 Profiles are defined in TOML format. See `sbx/profiles/` for examples.
