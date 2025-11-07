@@ -22,14 +22,10 @@ filesystem.read:
     - /usr/local
     - /opt/local
     - /private/etc
-    - ~/.pyenv
-    - ~/.clojure
     - /Library/Java/JavaVirtualMachines
     - /Library/Apple/usr/bin
     - /Library/Apple/usr/libexec/oah
     - /Library/Developer/CommandLineTools/
-    - ~/.dotfiles/link
-    - ~/.dotfiles/shell_sources
     - /opt/homebrew
   regex:
     - "/Users/[a-zA-Z]+/Library/Python/[0-9,\\.]+/lib/python[0-9,\\.]*/site-packages"
@@ -39,19 +35,19 @@ filesystem.read:
 
 filesystem.write:
   paths:
-    - ~/.m2
-    - ~/.rustup
-    - ~/.cargo
-    - ~/.rbenv
-    - ~/.yarnrc
-    - ~/.yarn
-    - ~/.cache/yarn
-    - ~/.config/yarn
-    - ~/.electron-gyp
-    - ~/.Library/Caches/node-gyp
-    - ~/.Library/Caches/electron
-    - ~/.pyenv/shims
-    - ~/.Library/Caches/pip
+    - "{home}/.m2"
+    - "{home}/.rustup"
+    - "{home}/.cargo"
+    - "{home}/.rbenv"
+    - "{home}/.yarnrc"
+    - "{home}/.yarn"
+    - "{home}/.cache/yarn"
+    - "{home}/.config/yarn"
+    - "{home}/.electron-gyp"
+    - "{home}/Library/Caches/node-gyp"
+    - "{home}/Library/Caches/electron"
+    - "{home}/.pyenv/shims"
+    - "{home}/Library/Caches/pip"
     - /private/var/run/utmpx
     - /private/etc/ssl/openssl.cnf
     - /private/var/folders/
