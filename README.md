@@ -44,22 +44,6 @@ Make sure `~/.local/bin` is in your PATH.
 
 - `sbx foo bar baz -- command` combines profiles `foo`, `bar`, and `baz` and runs `command` within that sandbox.
 
-### Executable-Specific Profiles
-
-Configure default profiles for executables in `~/.local/share/sbx/executables.toml`:
-
-```toml
-[[executables]]
-pattern = "npm"
-profiles = ["base", "online"]
-
-[[executables]]
-pattern = "cargo"
-profiles = ["base"]
-```
-
-When you run `npm install`, it will automatically use the `base` and `online` profiles.
-
 ### Command-Line Overrides
 
 Override profile settings on the command line:
