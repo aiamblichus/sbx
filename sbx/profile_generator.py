@@ -1,15 +1,43 @@
-"""Generates macOS sandbox-exec Scheme profiles from TOML definitions."""
+"""Generates macOS sandbox-exec Scheme profiles from YAML definitions."""
 
 from pathlib import Path
 from typing import Any
 
-import tomllib
+import yaml
 
 from sbx.models import FilesystemConfig, ProfileConfig, ProfileOverrides
 
 
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dictionaries.
+
+    Merging rules:
+    - If both values are dicts, recursively merge them
+    - If both values are lists, concatenate them (base + override)
+    - If key exists in base but types don't match, override replaces base
+    - If key doesn't exist in base, add it from override
+    """
+    result: dict[str, Any] = base.copy()
+    for key, value in override.items():
+        if key in result:
+            # Key exists in base
+            if isinstance(result[key], dict) and isinstance(value, dict):
+                # Both are dicts - recursively merge
+                result[key] = deep_merge(result[key], value)
+            elif isinstance(result[key], list) and isinstance(value, list):
+                # Both are lists - concatenate (preserve order: base first, then override)
+                result[key] = result[key] + value
+            else:
+                # Types don't match or one is not dict/list - override replaces base
+                result[key] = value
+        else:
+            # Key doesn't exist in base - add it from override
+            result[key] = value
+    return result
+
+
 class ProfileGenerator:
-    """Generates Scheme sandbox profiles from TOML configuration."""
+    """Generates Scheme sandbox profiles from YAML configuration."""
 
     def __init__(self, profiles_dir: Path, cache_dir: Path | None = None):
         self.profiles_dir: Path = profiles_dir
@@ -18,12 +46,12 @@ class ProfileGenerator:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
     def load_profile(self, name: str) -> ProfileConfig:
-        """Load a TOML profile."""
+        """Load a YAML profile."""
         # Try user config directory first
-        profile_path = self.profiles_dir / f"{name}.toml"
+        profile_path = self.profiles_dir / f"{name}.yaml"
         if not profile_path.exists():
             # Fall back to package profiles
-            package_profiles = Path(__file__).parent / "profiles" / f"{name}.toml"
+            package_profiles = Path(__file__).parent / "profiles" / f"{name}.yaml"
             if package_profiles.exists():
                 profile_path = package_profiles
             else:
@@ -31,8 +59,10 @@ class ProfileGenerator:
                     f"Profile '{name}' not found at {profile_path} or {package_profiles}"
                 )
 
-        with open(profile_path, "rb") as f:
-            data = tomllib.load(f)
+        with open(profile_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            if data is None:
+                raise ValueError(f"Profile '{name}' is empty or invalid")
             return ProfileConfig.from_dict(data)
 
     def merge_profiles(
@@ -44,12 +74,72 @@ class ProfileGenerator:
         for name in profile_names:
             profile = self.load_profile(name)
             profile_dict = profile.to_dict()
-            merged_dict = self._deep_merge(merged_dict, profile_dict)
+            merged_dict = deep_merge(merged_dict, profile_dict)
 
         if overrides:
-            merged_dict = self._deep_merge(merged_dict, overrides)
+            merged_dict = deep_merge(merged_dict, overrides)
 
+        # Normalize the merged dict to ensure consistent structure
+        # This handles cases where overrides might create flat keys like "filesystem.read.paths"
+        # instead of nested "filesystem.read.paths"
+        merged_dict = self._normalize_dict_structure(merged_dict)
+
+        # Convert merged dict back to ProfileConfig
+        # This will validate and normalize the structure
         return ProfileConfig.from_dict(merged_dict)
+
+    def _normalize_dict_structure(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize dictionary structure to handle flat keys like 'filesystem.read.paths'.
+
+        Converts flat keys like {'filesystem.read.paths': [...]} into nested structure
+        {'filesystem': {'read': {'paths': [...]}}}
+        """
+        result: dict[str, Any] = {}
+
+        for key, value in data.items():
+            if "." in key:
+                # This is a flat key that should be nested
+                keys = key.split(".")
+                current = result
+                for k in keys[:-1]:
+                    if k not in current:
+                        current[k] = {}
+                    elif not isinstance(current[k], dict):
+                        # Conflict: key exists but isn't a dict
+                        # Merge the existing value into the nested structure
+                        existing_value = current[k]
+                        current[k] = {}
+                        # Try to preserve existing structure if it's a dict
+                        if isinstance(existing_value, dict):
+                            current[k].update(existing_value)
+                    current = current[k]
+
+                final_key = keys[-1]
+                # If the final key already exists, merge lists if both are lists
+                if final_key in current:
+                    if isinstance(current[final_key], list) and isinstance(value, list):
+                        current[final_key] = current[final_key] + value
+                    elif isinstance(current[final_key], dict) and isinstance(
+                        value, dict
+                    ):
+                        current[final_key] = deep_merge(current[final_key], value)
+                    else:
+                        current[final_key] = value
+                else:
+                    current[final_key] = value
+            else:
+                # Regular nested key
+                if key in result:
+                    if isinstance(result[key], dict) and isinstance(value, dict):
+                        result[key] = deep_merge(result[key], value)
+                    elif isinstance(result[key], list) and isinstance(value, list):
+                        result[key] = result[key] + value
+                    else:
+                        result[key] = value
+                else:
+                    result[key] = value
+
+        return result
 
     def generate_scheme(self, config: ProfileConfig, params: dict[str, str]) -> str:
         """Generate Scheme sandbox profile from merged config."""
@@ -69,7 +159,7 @@ class ProfileGenerator:
         lines.append('(define home-path (param "home"))')
         lines.append("")
         lines.append("(define (home-subpath home-relative-subpath)")
-        lines.append("  (subpath (string-append home-path home-relative-subpath)))")
+        lines.append('  (subpath (string-append home-path "/" home-relative-subpath)))')
         lines.append("")
 
         # Network rules
@@ -174,6 +264,15 @@ class ProfileGenerator:
 
     def _format_path(self, path: str, params: dict[str, str]) -> str:
         """Format path with variable substitution."""
+        # Check for home-relative paths BEFORE substitution
+        if path.startswith("~/"):
+            # Use home-subpath helper function for home-relative paths
+            relative_path = path[2:]  # Remove "~/"
+            # Still substitute other vars like {working-directory}
+            relative_path = self._substitute_vars(relative_path, params)
+            return f'(home-subpath "{relative_path}")'
+
+        # Substitute variables for other path types
         path = self._substitute_vars(path, params)
 
         # Handle absolute paths
@@ -182,9 +281,6 @@ class ProfileGenerator:
         # Handle regex patterns
         elif path.startswith("^") or "*" in path or "?" in path:
             return f'(regex #"{path}")'
-        # Handle home-relative paths
-        elif path.startswith("~/"):
-            return f'(home-subpath "{path[2:]}")'
         # Handle literal paths
         else:
             return f'(literal "{path}")'
@@ -197,27 +293,4 @@ class ProfileGenerator:
             "{working-directory}", params.get("working-directory", "")
         )
         result = result.replace("{home}", params.get("home", ""))
-        return result
-
-    def _deep_merge(
-        self, base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Deep merge two dictionaries."""
-        result: dict[str, Any] = base.copy()
-        for key, value in override.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
-                result[key] = self._deep_merge(result[key], value)
-            elif (
-                isinstance(value, list)
-                and key in result
-                and isinstance(result[key], list)
-            ):
-                # Merge lists (append new items)
-                result[key] = result[key] + value
-            else:
-                result[key] = value
         return result

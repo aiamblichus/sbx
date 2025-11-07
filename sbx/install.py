@@ -18,7 +18,7 @@ def install_default_profiles(force: bool = False) -> None:
         package = resources.files("sbx.profiles")
         if package.is_dir():
             for profile_file in package.iterdir():
-                if profile_file.name.endswith(".toml") and profile_file.is_file():
+                if profile_file.name.endswith(".yaml") and profile_file.is_file():
                     dest_file = profiles_dir / profile_file.name
                     if not dest_file.exists() or force:
                         print(
@@ -30,7 +30,7 @@ def install_default_profiles(force: bool = False) -> None:
         # Fallback: try relative path from this file
         package_profiles = Path(__file__).parent / "profiles"
         if package_profiles.exists():
-            for profile_file in package_profiles.glob("*.toml"):
+            for profile_file in package_profiles.glob("*.yaml"):
                 dest_file = profiles_dir / profile_file.name
                 if not dest_file.exists():
                     _ = shutil.copy2(profile_file, dest_file)

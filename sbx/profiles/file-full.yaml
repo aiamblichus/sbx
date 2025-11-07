@@ -1,0 +1,8 @@
+profile:
+  name: file-full
+  description: "Full filesystem access"
+
+filesystem.write:
+  paths:
+    - /
+

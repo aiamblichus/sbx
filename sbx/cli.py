@@ -9,9 +9,12 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from sbx.profile_generator import ProfileGenerator
+import yaml
+
+from sbx.profile_generator import ProfileGenerator, deep_merge
 from sbx.install import install_default_profiles
 from sbx.models import ProfileOverrides
+from sbx.config_loader import load_executable_config, find_matching_executable_configs
 
 
 def get_config_dir() -> Path:
@@ -93,6 +96,11 @@ def main() -> None:
         install_default_profiles(force=force)
         sys.exit(0)
 
+    # Check for debug flag
+    debug = "--debug" in sys.argv
+    if debug:
+        sys.argv.remove("--debug")
+
     profiles: list[str] = ["base"]
     overrides: ProfileOverrides = {}  # type: ignore[type-arg]
     command: list[str] | None = None
@@ -114,6 +122,43 @@ def main() -> None:
             profiles = ["base"] + profiles
     if parsed_overrides:
         overrides = parsed_overrides
+
+    # Load executable-specific config if we have a command
+    if command:
+        executable_name = Path(command[0]).name  # Extract just the name, not path
+        exec_config = load_executable_config()
+        if exec_config:
+            matches = find_matching_executable_configs(executable_name, exec_config)
+            if matches:
+                # Merge all matching executable configs
+                # Precedence: executable profiles -> CLI profiles -> executable overrides -> CLI overrides
+                exec_profiles: list[str] = []
+                exec_overrides: ProfileOverrides = {}  # type: ignore[type-arg]
+
+                for exec_profiles_list, exec_overrides_dict in matches:
+                    exec_profiles.extend(exec_profiles_list)
+                    # Deep merge overrides
+                    if exec_overrides_dict:
+                        exec_overrides = deep_merge(exec_overrides, exec_overrides_dict)
+
+                # Merge executable profiles with CLI profiles
+                # If executable config specifies profiles, prepend them (but still include base)
+                if exec_profiles:
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    merged_profiles: list[str] = []
+                    for p in exec_profiles + profiles:
+                        if p not in seen:
+                            merged_profiles.append(p)
+                            seen.add(p)
+                    profiles = merged_profiles
+                    # Ensure base is included unless explicitly excluded
+                    if "base" not in profiles and "no-base" not in profiles:
+                        profiles = ["base"] + profiles
+
+                # Merge executable overrides with CLI overrides (CLI takes precedence)
+                if exec_overrides:
+                    overrides = deep_merge(exec_overrides, overrides)
 
     # Generate profile
     profiles_dir = get_profiles_dir()
@@ -137,6 +182,36 @@ def main() -> None:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".sb", delete=False) as f:
         _ = f.write(scheme_profile)
         profile_path = f.name
+
+    # Debug output (after profile_path is defined)
+    if debug:
+        print("=" * 80, file=sys.stderr)
+        print("DEBUG: Effective Configuration", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(f"Profiles merged (in order): {', '.join(profiles)}", file=sys.stderr)
+        if overrides:
+            print("\nCommand-line overrides:", file=sys.stderr)
+            print(yaml.dump(overrides, default_flow_style=False), file=sys.stderr)
+        print("\nMerged configuration:", file=sys.stderr)
+        config_dict = merged_config.to_dict()
+        print(
+            yaml.dump(config_dict, default_flow_style=False, sort_keys=False),
+            file=sys.stderr,
+        )
+        # Also show the actual Pydantic model structure
+        if merged_config.filesystem and merged_config.filesystem.read:
+            print("\nDEBUG: filesystem.read.paths from model:", file=sys.stderr)
+            print(
+                f"  Count: {len(merged_config.filesystem.read.paths)}", file=sys.stderr
+            )
+            print(f"  Paths: {merged_config.filesystem.read.paths}", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print("DEBUG: Generated Scheme Profile", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(scheme_profile, file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(f"DEBUG: Profile written to: {profile_path}", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
 
     # Set environment variables
     env = os.environ.copy()
@@ -163,13 +238,26 @@ def main() -> None:
         # Properly escape arguments for shell
         shell_args = shlex.join(resolved_command)
         shell_cmd = [shell, "-c", shell_args]
-        cmd = ["sandbox-exec", "-f", profile_path] + shell_cmd
+        cmd = [
+            "sandbox-exec",
+            "-f",
+            profile_path,
+            "-D",
+            f"home={params['home']}",
+        ] + shell_cmd
     else:
         # Use /bin/sh as default for interactive shell too
         shell = os.environ.get("SHELL", "/bin/sh")
         if not os.path.exists(shell):
             shell = "/bin/sh"
-        cmd = ["sandbox-exec", "-f", profile_path, shell]
+        cmd = [
+            "sandbox-exec",
+            "-f",
+            profile_path,
+            "-D",
+            f"home={params['home']}",
+            shell,
+        ]
 
     # Execute sandbox
     # Use subprocess to execute sandbox-exec

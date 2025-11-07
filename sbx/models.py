@@ -1,8 +1,9 @@
 """Pydantic models for sandbox profile configuration."""
 
+import re
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # Type alias for override dictionaries (nested structure matching ProfileConfig)
 # Used for command-line overrides
@@ -126,7 +127,7 @@ class ProfileConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProfileConfig":
-        """Create ProfileConfig from a dictionary (e.g., from TOML)."""
+        """Create ProfileConfig from a dictionary (e.g., from YAML)."""
         # Pydantic automatically handles nested model parsing based on type annotations
         return cls.model_validate(data)
 
@@ -136,3 +137,52 @@ class ProfileConfig(BaseModel):
         # exclude_unset=True ensures we only include explicitly set values (not defaults)
         # exclude_none=True ensures we don't include None values
         return self.model_dump(exclude_none=True, exclude_unset=True)
+
+
+class ExecutableConfig(BaseModel):
+    """Configuration for an executable pattern match."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
+
+    pattern: str
+    profiles: list[str] = []
+    overrides: ProfileOverrides = {}  # type: ignore[type-arg]
+
+    @field_validator("pattern")
+    @classmethod
+    def validate_pattern(cls, v: str) -> str:
+        """Validate that pattern is a valid regex."""
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern '{v}': {e}") from e
+        return v
+
+    def matches(self, executable_name: str) -> bool:
+        """Check if the executable name matches this pattern."""
+        try:
+            return bool(re.match(self.pattern, executable_name))
+        except re.error:
+            return False
+
+
+class ExecutablesConfig(BaseModel):
+    """Configuration for executable-specific profiles."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
+
+    executables: dict[str, ExecutableConfig] = {}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExecutablesConfig":
+        """Create ExecutablesConfig from a dictionary (e.g., from YAML)."""
+        # Handle the case where executables is a dict of ExecutableConfig objects
+        if "executables" in data:
+            executables_dict = {}
+            for key, value in data["executables"].items():
+                if isinstance(value, dict):
+                    executables_dict[key] = ExecutableConfig.model_validate(value)
+                else:
+                    executables_dict[key] = value
+            data["executables"] = executables_dict
+        return cls.model_validate(data)

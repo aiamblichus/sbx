@@ -1,2 +1,2 @@
-include sbx/profiles/*.toml
+include sbx/profiles/*.yaml
 
