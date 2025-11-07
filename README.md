@@ -55,7 +55,7 @@ sbx base +filesystem.write.paths='["/tmp"]' -- mycommand
 
 ### Custom Profiles
 
-Create custom profiles in `~/.local/share/sbx/profiles/`:
+Create custom profiles in `~/.local/config/sbx/profiles/`:
 
 ```toml
 [profile]
